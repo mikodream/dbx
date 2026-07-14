@@ -2062,7 +2062,7 @@ function canDropIndex(index: EditableStructureIndex): boolean {
 }
 
 const canEditForeignKeys = computed(() => structureCapabilities.value.foreignKey);
-const canEditMysqlTriggers = computed(() => structureDialect.value === "mysql");
+const canEditTriggers = computed(() => structureDialect.value === "mysql" || structureDialect.value === "oracle");
 
 function generatedForeignKeyName(column = ""): string {
   const table = structureIndexTableName() || "table";
@@ -2110,7 +2110,7 @@ function canEditForeignKeyDraft(foreignKey: EditableStructureForeignKey): boolea
 }
 
 function addTrigger() {
-  if (!canEditMysqlTriggers.value || triggersLoading.value) return;
+  if (!canEditTriggers.value || triggersLoading.value) return;
   activeTab.value = "triggers";
   triggers.value.push({
     id: `new:${uuid()}`,
@@ -2132,7 +2132,7 @@ function toggleDropTrigger(trigger: EditableStructureTrigger) {
 }
 
 function canEditTriggerDraft(trigger: EditableStructureTrigger): boolean {
-  return !triggersLoading.value && canEditMysqlTriggers.value && !trigger.markedForDrop;
+  return !triggersLoading.value && canEditTriggers.value && !trigger.markedForDrop;
 }
 
 function primarySqlOperation(sql: string): string {
@@ -2265,7 +2265,7 @@ function addItemForActiveTab(): boolean {
     addForeignKey();
     return true;
   }
-  if (activeTab.value === "triggers" && canEditMysqlTriggers.value) {
+  if (activeTab.value === "triggers" && canEditTriggers.value) {
     addTrigger();
     return true;
   }
@@ -2609,7 +2609,7 @@ watch([activeTab, ddlLoading], ([tab, loading]) => {
                 <Plus :class="structureIconClass" />
                 {{ t("structureEditor.addForeignKey") }}
               </Button>
-              <Button v-if="activeTab === 'triggers'" size="sm" :class="structureToolbarButtonClass" :disabled="!canEditMysqlTriggers || triggersLoading" @click="addTrigger">
+              <Button v-if="activeTab === 'triggers'" size="sm" :class="structureToolbarButtonClass" :disabled="!canEditTriggers || triggersLoading" @click="addTrigger">
                 <Plus :class="structureIconClass" />
                 {{ t("structureEditor.addTrigger") }}
               </Button>

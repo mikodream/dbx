@@ -7,19 +7,20 @@ pub(super) fn build_trigger_sql(options: &TableStructureSqlOptions, warnings: &m
         return Vec::new();
     }
 
+    let dialect = super::dialect::capabilities_for(options.database_type).dialect;
     let database_label = database_label(options.database_type);
-    if super::dialect::capabilities_for(options.database_type).dialect != StructureDialect::Mysql {
+    if !matches!(dialect, StructureDialect::Mysql | StructureDialect::Oracle) {
         warnings.push(format!("Editing triggers is not supported for {database_label} from this editor."));
         return Vec::new();
     }
 
-    let table = qualified_table(StructureDialect::Mysql, options.schema.as_deref(), &options.table_name);
+    let table = qualified_table(dialect, options.schema.as_deref(), &options.table_name);
     let mut statements = Vec::new();
 
     for trigger in &options.triggers {
         if trigger.marked_for_drop {
             if let Some(original) = &trigger.original {
-                statements.push(drop_trigger_sql(options.schema.as_deref(), &original.name));
+                statements.push(drop_trigger_sql(dialect, options.schema.as_deref(), &original.name));
             }
             continue;
         }
@@ -28,10 +29,12 @@ pub(super) fn build_trigger_sql(options: &TableStructureSqlOptions, warnings: &m
             if !has_trigger_change(trigger, original) {
                 continue;
             }
-            statements.push(drop_trigger_sql(options.schema.as_deref(), &original.name));
+            if dialect != StructureDialect::Oracle || clean(&trigger.name) != clean(&original.name) {
+                statements.push(drop_trigger_sql(dialect, options.schema.as_deref(), &original.name));
+            }
         }
 
-        if let Some(sql) = create_trigger_sql(&table, trigger, warnings) {
+        if let Some(sql) = create_trigger_sql(dialect, options.schema.as_deref(), &table, trigger, warnings) {
             statements.push(sql);
         }
     }
@@ -46,20 +49,22 @@ fn has_trigger_change(trigger: &EditableStructureTrigger, original: &TriggerInfo
         || normalize_statement(&trigger.statement) != normalize_statement(original.statement.as_deref().unwrap_or(""))
 }
 
-fn drop_trigger_sql(schema: Option<&str>, name: &str) -> String {
+fn drop_trigger_sql(dialect: StructureDialect, schema: Option<&str>, name: &str) -> String {
     let qualified_name = if schema.is_some_and(|schema| !schema.trim().is_empty()) {
-        format!(
-            "{}.{}",
-            quote_ident(StructureDialect::Mysql, schema.unwrap()),
-            quote_ident(StructureDialect::Mysql, name)
-        )
+        format!("{}.{}", quote_ident(dialect, schema.unwrap()), quote_ident(dialect, name))
     } else {
-        quote_ident(StructureDialect::Mysql, name)
+        quote_ident(dialect, name)
     };
     format!("DROP TRIGGER {qualified_name};")
 }
 
-fn create_trigger_sql(table: &str, trigger: &EditableStructureTrigger, warnings: &mut Vec<String>) -> Option<String> {
+fn create_trigger_sql(
+    dialect: StructureDialect,
+    schema: Option<&str>,
+    table: &str,
+    trigger: &EditableStructureTrigger,
+    warnings: &mut Vec<String>,
+) -> Option<String> {
     let name = clean(&trigger.name);
     let timing = normalize_keyword(&trigger.timing);
     let event = normalize_keyword(&trigger.event);
@@ -78,9 +83,18 @@ fn create_trigger_sql(table: &str, trigger: &EditableStructureTrigger, warnings:
         return None;
     }
 
+    let create_keyword =
+        if dialect == StructureDialect::Oracle { "CREATE OR REPLACE TRIGGER" } else { "CREATE TRIGGER" };
+    let trigger_name = if dialect == StructureDialect::Oracle && schema.is_some_and(|schema| !schema.trim().is_empty())
+    {
+        format!("{}.{}", quote_ident(dialect, schema.unwrap()), quote_ident(dialect, &name))
+    } else {
+        quote_ident(dialect, &name)
+    };
+
     Some(format!(
-        "CREATE TRIGGER {} {timing} {event} ON {table} FOR EACH ROW\n{};",
-        quote_ident(StructureDialect::Mysql, &name),
+        "{create_keyword} {} {timing} {event} ON {table} FOR EACH ROW\n{};",
+        trigger_name,
         statement.trim_end_matches(';').trim_end()
     ))
 }
