@@ -72,6 +72,7 @@ interface BuildQueryResultExportRequestOptions {
   exportId: string;
   filePath: string;
   format: "csv" | "xlsx" | "txt";
+  includeSqlSheet?: boolean;
 }
 
 type DroppedTableObjectType = "TABLE" | "VIEW" | "MATERIALIZED_VIEW";
@@ -1012,7 +1013,7 @@ export const useQueryStore = defineStore("query", () => {
     const id = uuid();
     const tab: QueryTab = {
       id,
-      title: t("processList.title"),
+      title: conn?.name ? `${conn.name} - ${t("processList.title")}` : t("processList.title"),
       connectionId,
       database: conn?.database || "",
       sql: "",
@@ -3000,6 +3001,7 @@ export const useQueryStore = defineStore("query", () => {
             : {}),
           ...(clientSessionId ? { clientSessionId } : {}),
           timeoutSecs: queryTimeoutSecs,
+          continueOnError: settingsStore.editorSettings.continueOnErrorOnBatch,
         };
         console.info("[DBX][executeTabSql:execute-multi:invoke]", {
           traceId,
@@ -3844,6 +3846,7 @@ export const useQueryStore = defineStore("query", () => {
       useAgentCursor,
       filePath: options.filePath,
       format: options.format,
+      includeSqlSheet: options.format === "xlsx" && options.includeSqlSheet === true,
       pageSize: settings.exportBatchSize,
       rowLimit,
       totalRows,

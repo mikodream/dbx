@@ -117,7 +117,7 @@ const emit = defineEmits<{
   connectStarted: [name: string];
   connectSucceeded: [name: string];
   connectFailed: [message: string];
-  openDriverStore: [];
+  openDriverStore: [tab?: "jdbc"];
   openTunnelProfileSettings: [];
 }>();
 
@@ -1158,7 +1158,6 @@ async function installSqlServerLegacyCompatibilityComponentIfNeeded(): Promise<b
   if (await api.isAgentInstalled(SQLSERVER_LEGACY_COMPATIBILITY_DRIVER_KEY)) return true;
 
   const label = t("connection.sqlServerLegacyCompatibilityComponent");
-  testResult.value = { ok: true, message: t("connection.sqlServerLegacyCompatibilityComponentInstalling") };
   beginAgentDriverInstall(SQLSERVER_LEGACY_COMPATIBILITY_DRIVER_KEY, label);
   try {
     await api.installAgent(SQLSERVER_LEGACY_COMPATIBILITY_DRIVER_KEY);
@@ -1176,6 +1175,8 @@ async function onSqlServerLegacyCompatibilityModeChange(event: Event) {
   if (form.value.db_type !== "sqlserver") return;
   const input = event.target instanceof HTMLInputElement ? event.target : null;
   const enabled = input?.checked === true;
+  // The connection test may still be using the previous compatibility mode.
+  resetTestState();
   if (!enabled) {
     form.value.url_params = setSqlServerLegacyCompatibilityMode(form.value.url_params, false);
     return;
@@ -1185,7 +1186,7 @@ async function onSqlServerLegacyCompatibilityModeChange(event: Event) {
   try {
     await installSqlServerLegacyCompatibilityComponentIfNeeded();
     form.value.url_params = setSqlServerLegacyCompatibilityMode(form.value.url_params, true);
-    testResult.value = { ok: true, message: t("connection.sqlServerLegacyCompatibilityModeEnabled") };
+    testResult.value = null;
   } catch {
     form.value.url_params = setSqlServerLegacyCompatibilityMode(form.value.url_params, false);
     if (input) input.checked = false;
@@ -1819,7 +1820,6 @@ const dbOptions: DbOption[] = [
   { value: "nacos", label: "Nacos" },
   { value: "influxdb", label: "InfluxDB" },
   { value: "iris", label: "IRIS" },
-  { value: "jdbc", label: "JDBC" },
   { value: "manticoresearch", label: "Manticore Search" },
   { value: "custom_mysql", label: "Custom (MySQL)" },
   { value: "custom_postgres", label: "Custom (PostgreSQL)" },
@@ -3832,7 +3832,7 @@ function openExternalUrl(url: string) {
 
       <template v-if="dialogStep === 'select'">
         <div class="space-y-4">
-          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-end">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div class="flex items-center gap-2">
               <div class="flex shrink-0 rounded-lg border bg-muted/40 p-0.5">
                 <Button type="button" size="icon-sm" :variant="dbPickerView === 'icon' ? 'secondary' : 'ghost'" :title="t('connection.iconView')" :aria-label="t('connection.iconView')" @click="dbPickerView = 'icon'">
@@ -3847,6 +3847,10 @@ function openExternalUrl(url: string) {
                 <Input v-model="dbSearchQuery" class="h-9 pl-8" :placeholder="t('connection.searchDatabasePlaceholder')" />
               </div>
             </div>
+            <Button data-jdbc-connection-entry type="button" variant="outline" class="h-9 shrink-0 gap-2" @click="goToConnectionStep('jdbc')">
+              <DatabaseIcon db-type="jdbc" class="h-4 w-4" />
+              {{ t("connection.jdbcConnection") }}
+            </Button>
           </div>
 
           <div class="max-h-[58vh] space-y-5 overflow-y-auto pr-2">
@@ -4131,7 +4135,7 @@ function openExternalUrl(url: string) {
                         {{ t("connection.jdbcPluginHint") }}
                       </p>
                       <div class="flex flex-wrap gap-2">
-                        <Button type="button" variant="outline" size="sm" @click="emit('openDriverStore')">
+                        <Button type="button" variant="outline" size="sm" @click="emit('openDriverStore', 'jdbc')">
                           <FolderOpen class="h-3.5 w-3.5" />
                           {{ t("toolbar.driverManager") }}
                         </Button>
@@ -5056,7 +5060,7 @@ function openExternalUrl(url: string) {
                           {{ t("connection.jdbcPluginHint") }}
                         </p>
                         <div class="flex flex-wrap gap-2">
-                          <Button type="button" variant="outline" size="sm" @click="emit('openDriverStore')">
+                          <Button type="button" variant="outline" size="sm" @click="emit('openDriverStore', 'jdbc')">
                             <FolderOpen class="h-3.5 w-3.5" />
                             {{ t("toolbar.driverManager") }}
                           </Button>

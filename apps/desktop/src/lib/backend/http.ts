@@ -706,6 +706,7 @@ export async function executeMulti(
     clientSessionId?: string;
     timeoutSecs?: number;
     useTransaction?: boolean;
+    continueOnError?: boolean;
   },
 ): Promise<QueryResult[]> {
   return post("/api/query/execute-multi", { connectionId, database, sql, schema, executionId, ...options });
@@ -1720,7 +1721,7 @@ export async function exportQueryResultXlsx(filePath: string, sheetName: string 
   URL.revokeObjectURL(url);
 }
 
-export async function exportQueryResultsXlsx(filePath: string, worksheets: readonly { sheetName?: string; columns: string[]; columnTypes?: string[]; rows: readonly (readonly XlsxCellValue[])[] }[]): Promise<void> {
+export async function exportQueryResultsXlsx(filePath: string, worksheets: readonly { sheetName?: string; columns: readonly string[]; columnTypes?: readonly string[]; rows: readonly (readonly XlsxCellValue[])[] }[]): Promise<void> {
   const { buildXlsxWorkbookMulti } = await import("@/lib/export/xlsxExport");
   const workbook = buildXlsxWorkbookMulti(worksheets);
   const fileName = filePath.split(/[\\/]/).pop() || "export.xlsx";
@@ -2163,6 +2164,11 @@ export async function deleteHistoryEntry(id: string): Promise<void> {
 export async function checkForUpdates(locale?: string): Promise<UpdateInfo> {
   const query = locale ? `?locale=${encodeURIComponent(locale)}` : "";
   return get(`/api/update/check${query}`);
+}
+
+export async function fetchChangelog(lang?: string): Promise<import("@/lib/app/changelog").ChangelogData> {
+  const query = lang ? `?lang=${encodeURIComponent(lang)}` : "";
+  return get(`/api/changelog${query}`);
 }
 
 export async function checkMcpServerStatus(): Promise<import("@/lib/backend/tauri").McpServerStatus> {

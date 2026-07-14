@@ -777,6 +777,7 @@ export async function executeMulti(
     clientSessionId?: string;
     timeoutSecs?: number;
     useTransaction?: boolean;
+    continueOnError?: boolean;
   },
 ): Promise<QueryResult[]> {
   return invoke("execute_multi", { connectionId, database, sql, schema, executionId, ...options });
@@ -1389,6 +1390,10 @@ export async function installMcpServer(): Promise<string> {
 
 export async function checkForUpdates(locale?: string): Promise<UpdateInfo> {
   return invoke("check_for_updates", { locale });
+}
+
+export async function fetchChangelog(lang?: string): Promise<import("@/lib/app/changelog").ChangelogData> {
+  return invoke("fetch_changelog", { lang });
 }
 
 export async function getSystemProxyUrl(): Promise<string | null> {
@@ -2279,6 +2284,7 @@ export interface QueryResultExportRequest {
   useAgentCursor: boolean;
   filePath: string;
   format: "csv" | "xlsx" | "txt";
+  includeSqlSheet?: boolean;
   pageSize: number;
   rowLimit?: number | null;
   totalRows?: number | null;
@@ -2425,7 +2431,7 @@ export async function exportQueryResultXlsx(filePath: string, sheetName: string 
   });
 }
 
-export async function exportQueryResultsXlsx(filePath: string, worksheets: readonly { sheetName?: string; columns: string[]; columnTypes?: string[]; rows: readonly (readonly XlsxCellValue[])[] }[]): Promise<void> {
+export async function exportQueryResultsXlsx(filePath: string, worksheets: readonly { sheetName?: string; columns: readonly string[]; columnTypes?: readonly string[]; rows: readonly (readonly XlsxCellValue[])[] }[]): Promise<void> {
   return invoke("export_query_results_xlsx", {
     request: {
       filePath,
