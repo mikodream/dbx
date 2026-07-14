@@ -2703,6 +2703,69 @@ fn builds_mysql_trigger_changes() {
 }
 
 #[test]
+fn builds_oracle_trigger_changes() {
+    let mut existing = trigger("orders_bu", "BEFORE", "UPDATE", "BEGIN\n  :NEW.updated_at := SYSTIMESTAMP;\nEND");
+    existing.original = Some(TriggerInfo {
+        name: "orders_bu".to_string(),
+        event: "UPDATE".to_string(),
+        timing: "BEFORE".to_string(),
+        statement: Some("BEGIN\n  :NEW.updated_at := CURRENT_TIMESTAMP;\nEND".to_string()),
+    });
+
+    let result = build_table_structure_change_sql(TableStructureSqlOptions {
+        database_type: Some(DatabaseType::Oracle),
+        schema: Some("APP".to_string()),
+        table_name: "orders".to_string(),
+        columns: Vec::new(),
+        indexes: Vec::new(),
+        foreign_keys: Vec::new(),
+        triggers: vec![existing],
+        table_comment: None,
+        original_table_comment: None,
+    });
+
+    assert_eq!(result.warnings, Vec::<String>::new());
+    assert_eq!(
+        result.statements,
+        vec![
+            "CREATE OR REPLACE TRIGGER \"APP\".\"orders_bu\" BEFORE UPDATE ON \"APP\".\"orders\" FOR EACH ROW\nBEGIN\n  :NEW.updated_at := SYSTIMESTAMP;\nEND;",
+        ]
+    );
+}
+
+#[test]
+fn drops_oracle_trigger_when_renamed() {
+    let mut existing = trigger("orders_audit_bu", "BEFORE", "UPDATE", "BEGIN\n  NULL;\nEND");
+    existing.original = Some(TriggerInfo {
+        name: "orders_bu".to_string(),
+        event: "UPDATE".to_string(),
+        timing: "BEFORE".to_string(),
+        statement: Some("BEGIN\n  NULL;\nEND".to_string()),
+    });
+
+    let result = build_table_structure_change_sql(TableStructureSqlOptions {
+        database_type: Some(DatabaseType::Oracle),
+        schema: Some("APP".to_string()),
+        table_name: "orders".to_string(),
+        columns: Vec::new(),
+        indexes: Vec::new(),
+        foreign_keys: Vec::new(),
+        triggers: vec![existing],
+        table_comment: None,
+        original_table_comment: None,
+    });
+
+    assert_eq!(result.warnings, Vec::<String>::new());
+    assert_eq!(
+        result.statements,
+        vec![
+            "DROP TRIGGER \"APP\".\"orders_bu\";",
+            "CREATE OR REPLACE TRIGGER \"APP\".\"orders_audit_bu\" BEFORE UPDATE ON \"APP\".\"orders\" FOR EACH ROW\nBEGIN\n  NULL;\nEND;",
+        ]
+    );
+}
+
+#[test]
 fn mysql_varchar_default_is_quoted() {
     let mut col = column("name");
     col.data_type = "varchar(255)".to_string();
