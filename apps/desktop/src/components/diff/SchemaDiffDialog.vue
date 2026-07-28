@@ -16,7 +16,7 @@ import SchemaDiffDeployStep from "@/components/diff/SchemaDiffDeployStep.vue";
 import SchemaDiffOptionsPanel from "@/components/diff/SchemaDiffOptionsPanel.vue";
 
 import { getSchemaDiffOptionsForDbType } from "@/lib/schema/schemaDiffOptions";
-import { createConcurrencyLimiter, mapWithConcurrency, schemaDiffMetadataConcurrency } from "@/lib/schema/schemaDiffMetadataLoad";
+import { createConcurrencyLimiter, mapWithConcurrency, schemaDiffMetadataConcurrency, shouldFetchSchemaDiffDdl } from "@/lib/schema/schemaDiffMetadataLoad";
 import { normalizeSchemaDiffCompareOptions } from "@/types/schemaDiff";
 import type { SchemaDiffCompareOptions, SchemaDiffConfig } from "@/types/schemaDiff";
 import type { ObjectSourceKind, TableInfo } from "@/types/database";
@@ -106,10 +106,10 @@ const isMaximized = ref(false);
 const dialogStyle = computed(() => {
   if (isMaximized.value) {
     return {
-      width: "100vw",
-      height: "100vh",
-      maxWidth: "100vw",
-      maxHeight: "100vh",
+      width: "100%",
+      height: "100%",
+      maxWidth: "100%",
+      maxHeight: "100%",
       borderRadius: "0",
     };
   }
@@ -131,6 +131,13 @@ const dialogStyle = computed(() => {
 
 function toggleMaximize() {
   isMaximized.value = !isMaximized.value;
+}
+
+function handleDialogEscape(event: KeyboardEvent) {
+  if (!showOptionsPanel.value) return;
+
+  event.preventDefault();
+  showOptionsPanel.value = false;
 }
 
 let resizeObserver: ResizeObserver | null = null;
@@ -299,12 +306,14 @@ async function loadSchemaDetails(tables: TableInfo[], context: SchemaDetailLoadC
 
   return mapWithConcurrency(tables, concurrency, async (table) => {
     const objectType = isViewOrMaterializedView(table.table_type);
+    const shouldFetchDdl = shouldFetchSchemaDiffDdl(Boolean(objectType), context.options);
+    const ddlPromise = shouldFetchDdl ? runMetadataQuery(() => api.getTableDdl(context.connectionId, context.database, context.schema, table.name, objectType)) : Promise.resolve("");
     const [columns, indexes, foreignKeys, triggers, ddl] = await Promise.all([
       runMetadataQuery(() => api.getColumns(context.connectionId, context.database, context.schema, table.name)),
       shouldLoadIndexes(context.options) ? runMetadataQuery(() => api.listIndexes(context.connectionId, context.database, context.schema, table.name)) : Promise.resolve([]),
       context.options.foreignKeys ? runMetadataQuery(() => api.listForeignKeys(context.connectionId, context.database, context.schema, table.name)) : Promise.resolve([]),
       context.options.triggers ? runMetadataQuery(() => api.listTriggers(context.connectionId, context.database, context.schema, table.name)) : Promise.resolve([]),
-      runMetadataQuery(() => api.getTableDdl(context.connectionId, context.database, context.schema, table.name, objectType)),
+      ddlPromise,
     ]);
 
     return { name: table.name, columns, indexes, foreignKeys, triggers, ddl };
@@ -527,24 +536,24 @@ async function handleSelectObject(obj: SchemaDiffObject) {
   try {
     // For "create" objects: source has it, target doesn't → fetch source DDL
     if (obj.operationType === "create" && !obj.sourceDdl) {
-      const result = await api.getObjectSource(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, obj.name, objectType);
+      const result = await api.getObjectSource(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, obj.name, objectType, obj.arguments);
       if (result?.source) obj.sourceDdl = result.source;
     }
 
     // For "delete" objects: target has it, source doesn't → fetch target DDL
     if (obj.operationType === "delete" && !obj.targetDdl) {
-      const result = await api.getObjectSource(targetConnectionId.value, targetDatabase.value, targetSchema.value, obj.name, objectType);
+      const result = await api.getObjectSource(targetConnectionId.value, targetDatabase.value, targetSchema.value, obj.name, objectType, obj.arguments);
       if (result?.source) obj.targetDdl = result.source;
     }
 
     // For "modify" objects: fetch whichever side is missing
     if (obj.operationType === "modify") {
       if (!obj.sourceDdl) {
-        const result = await api.getObjectSource(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, obj.name, objectType);
+        const result = await api.getObjectSource(sourceConnectionId.value, sourceDatabase.value, sourceSchema.value, obj.name, objectType, obj.arguments);
         if (result?.source) obj.sourceDdl = result.source;
       }
       if (!obj.targetDdl) {
-        const result = await api.getObjectSource(targetConnectionId.value, targetDatabase.value, targetSchema.value, obj.name, objectType);
+        const result = await api.getObjectSource(targetConnectionId.value, targetDatabase.value, targetSchema.value, obj.name, objectType, obj.arguments);
         if (result?.source) obj.targetDdl = result.source;
       }
     }
@@ -679,7 +688,7 @@ const targetConnectionInfo = computed(() => {
 
 <template>
   <Dialog v-model:open="open">
-    <DialogContent :class="['min-w-[800px] flex flex-col overflow-hidden', isMaximized ? '' : 'resize']" :style="dialogStyle" @interact-outside.prevent>
+    <DialogContent :class="['flex flex-col overflow-hidden', isMaximized ? 'min-w-0' : 'min-w-[800px] resize']" :portal-class="isMaximized ? 'p-0' : undefined" :style="dialogStyle" @interact-outside.prevent @escape-key-down="handleDialogEscape">
       <Button variant="ghost" size="icon-sm" class="absolute top-2 right-10 z-10" @click="toggleMaximize">
         <Maximize2 v-if="!isMaximized" class="w-4 h-4" />
         <Minimize2 v-else class="w-4 h-4" />
@@ -878,10 +887,10 @@ const targetConnectionInfo = computed(() => {
 <style scoped>
 :deep(.splitpanes--horizontal > .splitpanes__splitter) {
   height: 8px;
-  background: hsl(var(--border));
+  background: var(--border);
   cursor: row-resize;
 }
 :deep(.splitpanes--horizontal > .splitpanes__splitter:hover) {
-  background: hsl(var(--primary));
+  background: var(--primary);
 }
 </style>

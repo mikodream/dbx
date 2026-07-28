@@ -1,12 +1,21 @@
 use std::sync::Arc;
 use std::time::Instant;
-use tauri::State;
+use tauri::{AppHandle, Emitter, State};
 
 use crate::commands::connection::AppState;
 use dbx_core::db;
 use dbx_core::models::connection::DatabaseType;
 use dbx_core::query_cancel::RunningTaskMetadata;
 use dbx_core::sql::split_sql_statements;
+
+#[derive(Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ExecuteMultiProgress {
+    execution_id: String,
+    completed: usize,
+    total: usize,
+    success: bool,
+}
 
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
@@ -23,6 +32,7 @@ pub async fn execute_query(
     result_session_id: Option<String>,
     client_session_id: Option<String>,
     timeout_secs: Option<u64>,
+    execution_mode: Option<dbx_core::query::QueryExecutionMode>,
 ) -> Result<db::QueryResult, String> {
     let execution_id = execution_id.filter(|id| !id.trim().is_empty());
     let registered_query = execution_id.as_ref().map(|id| {
@@ -48,6 +58,7 @@ pub async fn execute_query(
             client_session_id,
             timeout_secs,
             execution_id,
+            execution_mode: execution_mode.unwrap_or_default(),
             ..Default::default()
         },
     )
@@ -57,6 +68,7 @@ pub async fn execute_query(
 #[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub async fn execute_multi(
+    app: AppHandle,
     state: State<'_, Arc<AppState>>,
     connection_id: String,
     database: String,
@@ -71,6 +83,7 @@ pub async fn execute_multi(
     timeout_secs: Option<u64>,
     use_transaction: Option<bool>,
     continue_on_error: Option<bool>,
+    execution_mode: Option<dbx_core::query::QueryExecutionMode>,
 ) -> Result<Vec<dbx_core::query::ExecuteMultiResult>, String> {
     let execution_id = execution_id.filter(|id| !id.trim().is_empty());
     let registered_query = execution_id.as_ref().map(|id| {
@@ -80,18 +93,28 @@ pub async fn execute_multi(
         )
     });
     let cancel_token = registered_query.as_ref().map(|query| query.token());
+    let progress = execution_id.as_ref().map(|execution_id| {
+        let app = app.clone();
+        let execution_id = execution_id.clone();
+        Arc::new(move |completed, total, success| {
+            let _ = app.emit(
+                "query-batch-progress",
+                ExecuteMultiProgress { execution_id: execution_id.clone(), completed, total, success },
+            );
+        }) as dbx_core::query::ExecuteMultiProgressCallback
+    });
     let trace_id = execution_id.as_deref().unwrap_or("no-execution-id").to_string();
     let started_at = Instant::now();
+    dbx_core::sql_diagnostics::debug_sql("query:execute_multi:start", &sql);
     log::info!(
-        "[query][execute_multi:start] trace_id={} connection_id={} database={} schema={:?} sql={}",
+        "[query][execute_multi:start] trace_id={} connection_id={} database={} schema={:?}",
         trace_id,
         connection_id,
         database,
-        schema,
-        sql
+        schema
     );
 
-    let result = dbx_core::query::execute_multi_core_with_options_for_client(
+    let result = dbx_core::query::execute_multi_core_with_options_for_client_and_progress(
         &state,
         &connection_id,
         &database,
@@ -108,7 +131,9 @@ pub async fn execute_multi(
             execution_id,
             use_transaction,
             continue_on_error: continue_on_error.unwrap_or(false),
+            execution_mode: execution_mode.unwrap_or_default(),
         },
+        progress,
     )
     .await;
     match &result {
@@ -347,6 +372,13 @@ pub fn build_duckdb_attach_database_sql(
 }
 
 #[tauri::command]
+pub fn build_sqlite_attach_database_sql(
+    options: dbx_core::db_admin_sql::SqliteAttachDatabaseSqlOptions,
+) -> Result<String, String> {
+    Ok(dbx_core::db_admin_sql::build_sqlite_attach_database_sql(options))
+}
+
+#[tauri::command]
 pub fn build_drop_object_sql(options: dbx_core::db_admin_sql::DropObjectSqlOptions) -> Result<String, String> {
     Ok(dbx_core::db_admin_sql::build_drop_object_sql(options))
 }
@@ -500,6 +532,21 @@ pub fn prepare_data_grid_save(
     options: dbx_core::data_grid_sql::DataGridSaveStatementOptions,
 ) -> Result<dbx_core::data_grid_sql::DataGridSavePreparation, String> {
     Ok(dbx_core::data_grid_sql::prepare_data_grid_save(options))
+}
+
+#[tauri::command]
+pub async fn extract_data_grid_selection(
+    request: dbx_core::data_grid_extractors::DataGridExtractRequest,
+) -> Result<dbx_core::data_grid_extractors::DataGridExtractResult, dbx_core::data_grid_extractors::DataGridExtractError>
+{
+    tauri::async_runtime::spawn_blocking(move || dbx_core::data_grid_extractors::extract_data_grid_selection(request))
+        .await
+        .map_err(|error| {
+            dbx_core::data_grid_extractors::DataGridExtractError::new(
+                dbx_core::data_grid_extractors::DataGridExtractErrorCode::ExecutionFailed,
+                format!("Data grid extractor worker failed: {error}"),
+            )
+        })?
 }
 
 #[tauri::command]
